@@ -40,8 +40,16 @@ BEGIN
     CREATE TABLE dbo.Users (
         UserId   INT IDENTITY(1,1) PRIMARY KEY,
         Username NVARCHAR(100) NOT NULL UNIQUE,
-        [Password] NVARCHAR(100) NOT NULL
+        [Password] NVARCHAR(255) NOT NULL  -- Expanded for BCrypt hashes
     );
+END
+ELSE
+BEGIN
+    -- Alter existing table to expand password column if needed
+    IF COL_LENGTH('dbo.Users', 'Password') < 255
+    BEGIN
+        ALTER TABLE dbo.Users ALTER COLUMN [Password] NVARCHAR(255) NOT NULL;
+    END
 END;
 
 IF OBJECT_ID('dbo.Patients', 'U') IS NULL
@@ -50,10 +58,19 @@ BEGIN
         PatientId       INT IDENTITY(1,1) PRIMARY KEY,
         FirstName       NVARCHAR(200) NOT NULL,
         LastName        NVARCHAR(200) NOT NULL,
-        Phone           NVARCHAR(50) NULL,
+        Phone           BIGINT NULL,  -- Changed from NVARCHAR(50) to BIGINT
         Email           NVARCHAR(200) NULL,
         AppointmentDate DATE NULL
     );
+END
+ELSE
+BEGIN
+    -- Alter existing table to change phone to BIGINT if needed
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Patients') AND name = 'Phone' AND system_type_id = 231)
+    BEGIN
+        -- Drop existing data and change type (WARNING: data loss)
+        ALTER TABLE dbo.Patients ALTER COLUMN Phone BIGINT NULL;
+    END
 END;
 
 IF OBJECT_ID('dbo.Appointments', 'U') IS NULL
@@ -130,7 +147,7 @@ END;
 CREATE OR ALTER PROCEDURE dbo.sp_add_patient
     @p_first_name       NVARCHAR(200),
     @p_last_name        NVARCHAR(200),
-    @p_phone            NVARCHAR(50),
+    @p_phone            BIGINT,  -- Changed from NVARCHAR(50) to BIGINT
     @p_email            NVARCHAR(200),
     @p_appointment_date DATE
 AS
@@ -187,6 +204,9 @@ END;
         {
             EnsureDatabaseSetup();
 
+            // Hash the password before storing
+            string hashedPassword = PasswordHasher.HashPassword(password);
+
             try
             {
                 using var conn = new SqlConnection(_connectionString);
@@ -196,7 +216,7 @@ END;
                 cmd.CommandType = CommandType.StoredProcedure;
 
                 cmd.Parameters.AddWithValue("@p_username", username);
-                cmd.Parameters.AddWithValue("@p_password", password);
+                cmd.Parameters.AddWithValue("@p_password", hashedPassword);
 
                 var result = cmd.ExecuteScalar();
                 return Convert.ToInt32(result);
@@ -227,14 +247,27 @@ END;
                 using var conn = new SqlConnection(_connectionString);
                 conn.Open();
 
-                using var cmd = new SqlCommand("dbo.sp_login", conn);
-                cmd.CommandType = CommandType.StoredProcedure;
+                // Retrieve the stored hash for the username
+                using var selectCmd = new SqlCommand(
+                    "SELECT UserId, [Password] FROM dbo.Users WHERE Username = @p_username",
+                    conn);
+                selectCmd.Parameters.AddWithValue("@p_username", username);
 
-                cmd.Parameters.AddWithValue("@p_username", username);
-                cmd.Parameters.AddWithValue("@p_password", password);
+                using var reader = selectCmd.ExecuteReader();
+                if (reader.Read())
+                {
+                    int userId = reader.GetInt32(0);
+                    string storedHash = reader.GetString(1);
 
-                var result = cmd.ExecuteScalar();
-                return Convert.ToInt32(result);
+                    // Verify the password against the stored hash
+                    if (PasswordHasher.VerifyPassword(password, storedHash))
+                    {
+                        return userId;
+                    }
+                }
+
+                // Invalid username or password
+                return -1;
             }
             catch (Exception ex)
             {
@@ -252,7 +285,7 @@ END;
         /// </summary>
         public int AddPatient(string firstName,
                               string lastName,
-                              string phone,
+                              long phone,  // Changed from string to long
                               string email,
                               DateTime appointmentDate)
         {

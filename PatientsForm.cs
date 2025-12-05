@@ -36,7 +36,7 @@ namespace AppointmentUI
         private void logInButton_Click(object? sender, EventArgs e)
         {
             string fullName = textBox1.Text.Trim();      // Full Name
-            string contact  = textBox2.Text.Trim();      // Contact
+            string contact  = textBox2.Text.Trim();      // Contact (Phone Number)
             string insurance = textBox3.Text.Trim();     // Insurance
             string policy    = textBox4.Text.Trim();     // Policy#
             DateTime appointmentDate = dateTimePickerStarttime.Value;
@@ -51,10 +51,31 @@ namespace AppointmentUI
                 return;
             }
 
+            // Validate phone number is numeric
+            if (string.IsNullOrWhiteSpace(contact))
+            {
+                MessageBox.Show(
+                    "Phone number is required.",
+                    "Validation Error",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!long.TryParse(contact, out long phoneNumber))
+            {
+                MessageBox.Show(
+                    "Phone number must be a valid numeric value.",
+                    "Validation Error",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
             try
             {
-                // We just pass four strings; DB doesn't care what they semantically mean.
-                int newId = _db.AddPatient(fullName, contact, insurance, policy, appointmentDate);
+                // Pass phone number as long instead of string
+                int newId = _db.AddPatient(fullName, insurance, phoneNumber, policy, appointmentDate);
 
                 MessageBox.Show(
                     $"Patient saved successfully with ID: {newId}",
